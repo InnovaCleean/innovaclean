@@ -118,4 +118,5 @@ create policy "Allow all access" on public.purchases for all using (true) with c
 create policy "Allow all access" on public.settings for all using (true) with check (true);
 
 -- Add unit column to products table
-ALTER TABLE public.products ADD COLUMN IF NOT EXISTS unit text DEFAULT 'Pieza';
+
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS unit text DEFAULT 'Litro';
