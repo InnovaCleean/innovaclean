@@ -116,3 +116,6 @@ create policy "Allow all access" on public.sales for all using (true) with check
 create policy "Allow all access" on public.clients for all using (true) with check (true);
 create policy "Allow all access" on public.purchases for all using (true) with check (true);
 create policy "Allow all access" on public.settings for all using (true) with check (true);
+
+-- Add unit column to products table
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS unit text DEFAULT 'Pieza';
