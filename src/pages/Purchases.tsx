@@ -119,7 +119,7 @@ export default function Purchases() {
                 <div className="w-full lg:w-1/3 space-y-6">
                     <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
                         <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                            <Archive className="w-6 h-6 text-blue-600" />
+                            <Archive className="w-6 h-6 text-primary-600" />
                             Surtir Inventario
                         </h2>
 
@@ -137,7 +137,7 @@ export default function Purchases() {
                                             if (!e.target.value) setSelectedProduct(null);
                                         }}
                                         placeholder="Buscar producto..."
-                                        className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                        className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none"
                                     />
                                 </div>
                                 {searchTerm && !selectedProduct && filteredProducts.length > 0 && (
@@ -158,9 +158,9 @@ export default function Purchases() {
                             </div>
 
                             {selectedProduct && (
-                                <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
-                                    <div className="text-sm text-blue-800 font-medium">{selectedProduct.name}</div>
-                                    <div className="text-xs text-blue-600 mt-1">Stock Actual: {selectedProduct.stockCurrent} ({selectedProduct.unit || 'uds'})</div>
+                                <div className="p-4 bg-primary-50 rounded-lg border border-primary-100">
+                                    <div className="text-sm text-primary-800 font-medium">{selectedProduct.name}</div>
+                                    <div className="text-xs text-primary-600 mt-1">Stock Actual: {selectedProduct.stockCurrent} ({selectedProduct.unit || 'uds'})</div>
                                 </div>
                             )}
 
@@ -173,7 +173,7 @@ export default function Purchases() {
                                         min="1"
                                         value={quantity}
                                         onChange={(e) => setQuantity(Number(e.target.value))}
-                                        className="w-full px-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-blue-500"
+                                        className="w-full px-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-primary-500"
                                     />
                                     {selectedProduct?.unit && (
                                         <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 uppercase">
@@ -192,7 +192,7 @@ export default function Purchases() {
                                     step="0.01"
                                     value={cost}
                                     onChange={(e) => setCost(Number(e.target.value))}
-                                    className="w-full px-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-blue-500"
+                                    className="w-full px-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-primary-500"
                                 />
                             </div>
 
@@ -200,14 +200,14 @@ export default function Purchases() {
                             <div className="pt-4 border-t border-slate-100 flex justify-between items-end">
                                 <div className="text-right w-full">
                                     <span className="text-xs text-slate-500 block">Total Inversión</span>
-                                    <span className="text-xl font-bold text-blue-700">{formatCurrency(quantity * cost)}</span>
+                                    <span className="text-xl font-bold text-primary-700">{formatCurrency(quantity * cost)}</span>
                                 </div>
                             </div>
 
                             <button
                                 type="submit"
                                 disabled={!selectedProduct}
-                                className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 active:bg-blue-800 transition-all shadow-lg shadow-blue-500/30 disabled:opacity-50"
+                                className="w-full py-3 bg-primary-600 text-white rounded-lg font-bold hover:bg-primary-700 active:bg-primary-800 transition-all shadow-lg shadow-primary-500/30 disabled:opacity-50"
                             >
                                 Registrar Compra
                             </button>
@@ -276,7 +276,7 @@ export default function Purchases() {
                                                 <div className="flex justify-center gap-2">
                                                     <button
                                                         onClick={() => handleOpenEditModal(purchase)}
-                                                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                                                        className="p-1.5 text-primary-600 hover:bg-primary-50 rounded-md transition-colors"
                                                         title="Editar"
                                                     >
                                                         <Edit2 className="w-4 h-4" />
@@ -324,7 +324,7 @@ export default function Purchases() {
                                     min="1"
                                     value={editForm.quantity}
                                     onChange={e => setEditForm(prev => ({ ...prev, quantity: Number(e.target.value) }))}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none focus:border-blue-500"
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none focus:border-primary-500"
                                 />
                             </div>
                             <div>
@@ -336,13 +336,13 @@ export default function Purchases() {
                                     step="0.01"
                                     value={editForm.costUnit}
                                     onChange={e => setEditForm(prev => ({ ...prev, costUnit: Number(e.target.value) }))}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none focus:border-blue-500"
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg outline-none focus:border-primary-500"
                                 />
                             </div>
 
                             <div className="pt-2 text-right">
                                 <div className="text-xs text-slate-400 uppercase font-black">Nuevo Total</div>
-                                <div className="text-xl font-bold text-blue-700">{formatCurrency(editForm.quantity * editForm.costUnit)}</div>
+                                <div className="text-xl font-bold text-primary-700">{formatCurrency(editForm.quantity * editForm.costUnit)}</div>
                             </div>
 
                             <div className="pt-4 flex justify-end gap-3">
@@ -355,7 +355,7 @@ export default function Purchases() {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
+                                    className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors shadow-lg shadow-primary-500/30"
                                 >
                                     Guardar Cambios
                                 </button>

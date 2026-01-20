@@ -24,9 +24,12 @@ export interface Client {
     colonia: string; // Updated from zip lookup
     city: string;
     state: string;
+    walletActive?: boolean; // Deprecated, use walletStatus
+    walletStatus?: 'inactive' | 'pending' | 'active';
 }
 
 export interface Product {
+    id: string;
     sku: string;
     category: string;
     name: string;
@@ -39,7 +42,23 @@ export interface Product {
     stockCurrent: number;
 }
 
+export type ExpenseType = 'fijo' | 'variable';
+
+export interface Expense {
+    id: string;
+    description: string;
+    amount: number;
+    type: ExpenseType;
+    category: string; // e.g., 'Renta', 'Luz', 'Sueldos', 'Materia Prima'
+    date: string;
+    userId: string;
+    userName: string;
+}
+
 export type priceType = 'retail' | 'medium' | 'wholesale';
+
+
+export type PaymentMethod = 'cash' | 'card' | 'card_credit' | 'card_debit' | 'transfer' | 'wallet' | 'multiple';
 
 export interface Sale {
     id: string;
@@ -51,11 +70,14 @@ export interface Sale {
     priceType: priceType;
     priceUnit: number; // Snapshot of price at time of sale
     amount: number;
+    paymentMethod?: PaymentMethod; // Added payment method
+    paymentDetails?: Record<string, number>; // Added for multiple payments
     sellerId: string;
     sellerName: string;
     clientId?: string; // Optional for backward compatibility, but we will default 'general'
     clientName?: string;
     isCorrection?: boolean;
+    isCancelled?: boolean; // New flag for cancellation
     correctionNote?: string;
     productName?: string; // Added for DB consistency
 }
@@ -97,17 +119,33 @@ export interface Settings {
     themeId: string;
     logo?: string;
     companyName: string;
-    razonSocial?: string;
-    rfc?: string;
-    address?: string;
-    zipCode?: string;
-    colonia?: string;
     city?: string;
     state?: string;
     country?: string;
     phone?: string;
+    email?: string;
+    rfc?: string;
+    address?: string;
+    zipCode?: string;
+    colonia?: string;
     priceThresholds?: {
         medium: number;
         wholesale: number;
     };
+    loyaltyPercentage?: number;
+    razonSocial?: string;
+    masterPin?: string;
+}
+
+
+export interface LoyaltyTransaction {
+    id: string;
+    clientId: string;
+    saleId?: string;
+    amount: number; // positive for earn, negative for spend
+    points: number;
+    type: 'earn' | 'redeem' | 'adjustment';
+    description: string;
+    date: string;
+    created_at: string;
 }

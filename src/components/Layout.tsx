@@ -12,7 +12,9 @@ import {
     Users,
     CreditCard,
     BarChart3,
-    Settings
+    Settings,
+    DollarSign,
+    Gift
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -34,6 +36,9 @@ export function Layout({ children }: LayoutProps) {
         { name: 'Inventario', href: '/inventory', icon: Package, roles: ['admin', 'seller'] },
         { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['admin'] },
         { name: 'Compras', href: '/purchases', icon: CreditCard, roles: ['admin'] },
+        { name: 'Gastos', href: '/expenses', icon: DollarSign, roles: ['admin', 'seller'] },
+        { name: 'Monedero', href: '/loyalty', icon: Gift, roles: ['admin', 'seller'] },
+        { name: 'Flujo de Caja', href: '/cash-flow', icon: DollarSign, roles: ['admin'] },
         { name: 'Usuarios', href: '/users', icon: Users, roles: ['admin'] },
         { name: 'Clientes', href: '/clients', icon: Users, roles: ['admin'] },
         { name: 'Reportes', href: '/reports', icon: BarChart3, roles: ['admin'] },

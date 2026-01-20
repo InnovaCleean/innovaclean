@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { Layout } from '../components/Layout';
-import { Search, AlertTriangle, PlusCircle, Trash2, Eye, X } from 'lucide-react';
+import { Search, AlertTriangle, PlusCircle, Trash2, Eye, X, Printer, Share2, Mail, DollarSign, FileText } from 'lucide-react';
 import { formatCurrency, formatDate, getCDMXDate, getCDMXISOString, getCDMXDateFromISO, parseCDMXDate } from '../lib/utils';
-import { Product, Sale, Client } from '../types';
+import { Sale, Client, PaymentMethod } from '../types';
 import { ClientForm } from '../components/ClientForm';
+import { jsPDF } from 'jspdf';
 
 export default function Sales() {
     const products = useStore((state) => state.products);
@@ -14,7 +15,7 @@ export default function Sales() {
     const settings = useStore((state) => state.settings);
     const clients = useStore((state) => state.clients);
     const addSalesBatch = useStore((state) => state.addSalesBatch);
-    const deleteSaleByFolio = useStore((state) => state.deleteSaleByFolio);
+    const cancelSaleByFolio = useStore((state) => state.cancelSaleByFolio);
     const updateFolioDate = useStore((state) => state.updateFolioDate);
     const addClient = useStore((state) => state.addClient); // Need to add client
 
@@ -23,8 +24,14 @@ export default function Sales() {
     const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
     const [searchTerm, setSearchTerm] = useState('');
-    const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+    const [selectedProductSku, setSelectedProductSku] = useState<string | null>(null);
     const [quantity, setQuantity] = useState(1);
+
+    // Derived state for selected product to ensure fresh stock data
+    const selectedProduct = useMemo(() => {
+        return products.find(p => p.sku === selectedProductSku) || null;
+    }, [products, selectedProductSku]);
+
     const [correctionMode, setCorrectionMode] = useState(false);
     const [correctionNote, setCorrectionNote] = useState('');
 
@@ -35,6 +42,7 @@ export default function Sales() {
     const [endDate, setEndDate] = useState(getCDMXDate());
 
     const [currentPriceType, setCurrentPriceType] = useState<'retail' | 'medium' | 'wholesale'>('retail');
+    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
 
     const handleNewClientSubmit = (data: Omit<Client, 'id'>) => {
         const newId = crypto.randomUUID();
@@ -113,7 +121,7 @@ export default function Sales() {
             setCart(prev => [...prev, saleData]);
         }
 
-        setSelectedProduct(null);
+        setSelectedProductSku(null);
         setSearchTerm('');
         setQuantity(1);
     };
@@ -148,22 +156,122 @@ export default function Sales() {
         }));
     };
 
+    const loyaltyTransactions = useStore((state) => state.loyaltyTransactions);
+
+    const walletBalance = useMemo(() => {
+        if (!selectedClient || selectedClient === 'general') return 0;
+        return loyaltyTransactions
+            .filter(t => t.clientId === selectedClient)
+            .reduce((acc, t) => acc + t.amount, 0); // Amount is + for earn, - for redeem
+    }, [selectedClient, loyaltyTransactions]);
+
+    const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+    const [paymentSplits, setPaymentSplits] = useState<Record<string, number>>({});
+
+    const handleSplitChange = (method: string, amount: number) => {
+        if (amount < 0) amount = 0;
+        if (method === 'wallet' && amount > walletBalance) {
+            amount = walletBalance;
+        }
+        setPaymentSplits(prev => ({ ...prev, [method]: amount }));
+    };
+
     const handleConfirmSale = () => {
         if (cart.length === 0) return;
 
         const currentClient = clients.find(c => c.id === selectedClient);
+
+        // Security Check: Validate Wallet Status for Redemption
+        const isWalletBlocked = !currentClient?.walletStatus || currentClient.walletStatus !== 'active';
+
+        if (paymentMethod === 'wallet') {
+            if (isWalletBlocked) {
+                alert(`El monedero de ${currentClient?.name} está marcando como ${currentClient?.walletStatus === 'pending' ? 'PENDIENTE' : 'INACTIVO'}. Solo puede acumular puntos, no usarlos para pagar.`);
+                return;
+            }
+            if (walletBalance < cartTotal) {
+                const useWallet = confirm(`Saldo insuficiente en monedero (${formatCurrency(walletBalance)}). ¿Deseas usar todo el saldo y pagar el resto con otro método?`);
+                if (useWallet) {
+                    setPaymentMethod('multiple');
+                    setPaymentSplits({
+                        wallet: walletBalance,
+                        cash: cartTotal - walletBalance
+                    });
+                    setIsPaymentModalOpen(true);
+                    return;
+                } else {
+                    return;
+                }
+            }
+        }
+
+        if (paymentMethod === 'multiple') {
+            // Note: Multiple payment confirmation is handled in handleConfirmSplitPayment
+            // We only initialize the modal here.
+
+            // However, if we are switching TO multiple from the wallet shortage logic above, 
+            // the check inside handleConfirmSplitPayment will catch it.
+            // But if user selected "Multiple" directly, we enter here.
+            setPaymentSplits({ cash: cartTotal }); // Default init
+            setIsPaymentModalOpen(true);
+            return;
+        }
+
         const finalizedCart = cart.map(item => ({
             ...item,
             clientId: selectedClient,
-            clientName: currentClient?.name || 'PÚBLICO GENERAL'
+            clientName: currentClient?.name || 'PÚBLICO GENERAL',
+            paymentMethod: paymentMethod,
+            paymentDetails: undefined // Simple payment
         }));
 
         addSalesBatch(finalizedCart);
-
         setCart([]);
         setCorrectionMode(false);
         setCorrectionNote('');
+        setPaymentMethod('cash');
     };
+
+    const handleConfirmSplitPayment = () => {
+        const totalSplits = Object.values(paymentSplits).reduce((a, b) => a + b, 0);
+        if (Math.abs(totalSplits - cartTotal) > 0.01) return;
+
+        const currentClient = clients.find(c => c.id === selectedClient);
+
+        // Security Check: Validate Wallet Status if trying to use wallet balance
+        if (paymentSplits['wallet'] > 0) {
+            const isWalletBlocked = !currentClient?.walletStatus || currentClient.walletStatus !== 'active';
+            if (isWalletBlocked) {
+                alert(`El monedero de ${currentClient?.name} está marcando como ${currentClient?.walletStatus === 'pending' ? 'PENDIENTE' : 'INACTIVO'}. No se puede redimir saldo aún.`);
+                return;
+            }
+        }
+
+        // Clean up zero entries
+        const cleanSplits: Record<string, number> = {};
+        Object.entries(paymentSplits).forEach(([k, v]) => {
+            if (v > 0) cleanSplits[k] = v;
+        });
+
+        const finalizedCart = cart.map(item => ({
+            ...item,
+            clientId: selectedClient,
+            clientName: currentClient?.name || 'PÚBLICO GENERAL',
+            paymentMethod: 'multiple' as PaymentMethod,
+            paymentDetails: cleanSplits
+        }));
+
+        addSalesBatch(finalizedCart);
+        setIsPaymentModalOpen(false);
+        setCart([]);
+        setCorrectionMode(false);
+        setCorrectionNote('');
+        setPaymentMethod('cash');
+    };
+
+    // ...
+
+
 
     const displayedSales = useMemo(() => {
         const startDay = parseCDMXDate(startDate);
@@ -190,6 +298,7 @@ export default function Sales() {
             items: Sale[];
             isCancelled: boolean;
             isCorrection: boolean;
+            paymentMethod?: string;
         }> = {};
 
         displayedSales.forEach(s => {
@@ -203,7 +312,8 @@ export default function Sales() {
                     amount: 0,
                     items: [],
                     isCancelled: false,
-                    isCorrection: false
+                    isCorrection: false,
+                    paymentMethod: s.paymentMethod
                 };
             }
             groups[s.folio].amount += s.amount;
@@ -224,9 +334,189 @@ export default function Sales() {
     const handleCancelFolio = (folio: string) => {
         const reason = window.prompt('Motivo de la cancelación del FOLIO completo:');
         if (reason) {
-            deleteSaleByFolio(folio, reason);
+            cancelSaleByFolio(folio, reason);
             setIsDetailModalOpen(false);
         }
+    };
+
+    const generateTicketText = (sale: typeof activeFolioData) => {
+        if (!sale) return '';
+        let text = `*TICKET DE VENTA*\nFolio: ${sale.folio}\nFecha: ${formatDate(sale.date)}\nCliente: ${sale.clientName}\n\n`;
+        sale.items.forEach(item => {
+            text += `${item.quantity} ${item.unit || 'pz'} - ${item.productName || item.sku}\n$${item.priceUnit} x ${item.quantity} = $${item.amount}\n`;
+        });
+        text += `\n*TOTAL: ${formatCurrency(sale.amount)}*\n\nGracias por su compra.`;
+        return encodeURIComponent(text);
+    };
+
+    const handlePrintTicket = () => {
+        if (!activeFolioData) return;
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+
+        const itemsHtml = activeFolioData.items.map(item => `
+            <tr>
+                <td>${item.quantity}</td>
+                <td>${item.productName || item.sku}</td>
+                <td style="text-align: right">$${item.priceUnit}</td>
+                <td style="text-align: right">$${item.amount}</td>
+            </tr>
+        `).join('');
+
+        const html = `
+            <html>
+            <head>
+                <style>
+                    body { font-family: monospace; font-size: 12px; max-width: 300px; margin: 0 auto; color: black; }
+                    .header { text-align: center; margin-bottom: 10px; }
+                    .header h1 { margin: 0; font-size: 16px; }
+                    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+                    th, td { text-align: left; padding: 2px 0; }
+                    .total { text-align: right; font-weight: bold; font-size: 14px; margin-top: 5px; border-top: 1px dashed black; pt-2; }
+                    .footer { text-align: center; margin-top: 20px; font-size: 10px; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>${settings.companyName}</h1>
+                    <p>Folio: ${activeFolioData.folio}<br>${formatDate(activeFolioData.date)}</p>
+                </div>
+                <table>
+                    <thead><tr><th>Cant</th><th>Prod</th><th>P.U</th><th>Total</th></tr></thead>
+                    <tbody>${itemsHtml}</tbody>
+                </table>
+                <div class="total">
+                    TOTAL: ${formatCurrency(activeFolioData.amount)}
+                </div>
+                <div class="footer">
+                    <p>¡Gracias por su preferencia!</p>
+                </div>
+                <script>
+                    window.onload = function() { window.print(); window.close(); }
+                </script>
+            </body>
+            </html>
+        `;
+        printWindow.document.write(html);
+        printWindow.document.close();
+    };
+
+    const handleShareWhatsapp = () => {
+        if (!activeFolioData) return;
+        // Generic message, user attaches PDF
+        const text = encodeURIComponent(`Hola, le envío su ticket de compra Folio: ${activeFolioData.folio} de ${settings.companyName}.`);
+        window.open(`https://wa.me/?text=${text}`, '_blank');
+    };
+
+    const handleShareEmail = () => {
+        if (!activeFolioData) return;
+        const text = generateTicketText(activeFolioData);
+        window.open(`mailto:?subject=Ticket de Venta ${activeFolioData.folio}&body=${text}`, '_blank');
+    };
+
+    const handleGeneratePDFTicket = () => {
+        if (!activeFolioData) return;
+        const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: [80, 200] // Small Receipt Format approx
+        });
+
+        const startY = 10;
+        let y = startY;
+        const centerX = 40;
+
+        // Header
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text(settings.companyName || 'INNOVA CLEAN', centerX, y, { align: 'center' });
+        y += 5;
+
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        if (settings.address) {
+            doc.text(settings.address, centerX, y, { align: 'center', maxWidth: 70 });
+            y += 4 + (settings.address.length > 30 ? 4 : 0);
+        }
+        if (settings.phone) {
+            doc.text(`Tel: ${settings.phone}`, centerX, y, { align: 'center' });
+            y += 4;
+        }
+        y += 2;
+        doc.text('------------------------------------------------', centerX, y, { align: 'center' });
+        y += 4;
+
+        // Info
+        doc.setFont('helvetica', 'bold');
+        doc.text(`FOLIO: ${activeFolioData.folio}`, centerX, y, { align: 'center' });
+        y += 4;
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Fecha: ${formatDate(activeFolioData.date)}`, centerX, y, { align: 'center' });
+        y += 4;
+        if (activeFolioData.clientName) {
+            doc.text(`Cliente: ${activeFolioData.clientName}`, centerX, y, { align: 'center', maxWidth: 70 });
+            y += 4 + (activeFolioData.clientName.length > 25 ? 4 : 0);
+        }
+
+        y += 2;
+        doc.text('------------------------------------------------', centerX, y, { align: 'center' });
+        y += 4;
+
+        // Items
+        doc.setFontSize(7);
+        doc.text('CANT  DESCRIPCION           IMPORTE', 5, y);
+        y += 4;
+
+        activeFolioData.items.forEach(item => {
+            const p = products.find(prod => prod.sku === item.sku);
+            const name = (p?.name || item.sku).substring(0, 18);
+            const qty = item.quantity.toString().padEnd(4);
+            const total = formatCurrency(item.amount);
+
+            doc.text(`${qty} ${name}`, 5, y);
+            doc.text(total, 75, y, { align: 'right' });
+            y += 4;
+        });
+
+        y += 2;
+        doc.text('------------------------------------------------', centerX, y, { align: 'center' });
+        y += 4;
+
+        // Totals
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`TOTAL: ${formatCurrency(activeFolioData.amount)}`, 75, y, { align: 'right' });
+        y += 6;
+
+        // Payment Method
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        const method = activeFolioData.items[0]?.paymentMethod || 'cash';
+        const methodMap: Record<string, string> = {
+            'cash': 'EFECTIVO',
+            'card_credit': 'TARJETA CREDITO',
+            'card_debit': 'TARJETA DEBITO',
+            'transfer': 'TRANSFERENCIA',
+            'wallet': 'MONEDERO',
+            'multiple': 'MIXTO'
+        };
+
+        if (method === 'multiple' && activeFolioData.items[0]?.paymentDetails) {
+            doc.text('PAGO MIXTO:', 5, y);
+            y += 4;
+            Object.entries(activeFolioData.items[0].paymentDetails).forEach(([m, amt]) => {
+                doc.text(`- ${methodMap[m] || m}: ${formatCurrency(amt as number)}`, 5, y);
+                y += 4;
+            });
+        } else {
+            doc.text(`MÉTODO DE PAGO: ${methodMap[method] || method}`, 5, y);
+        }
+
+        y += 10;
+        doc.setFontSize(7);
+        doc.text('¡GRACIAS POR SU COMPRA!', centerX, y, { align: 'center' });
+
+        doc.save(`Ticket_Folio_${activeFolioData.folio}.pdf`);
     };
 
     return (
@@ -243,7 +533,14 @@ export default function Sales() {
                         <form onSubmit={handleAddToCart} className="space-y-4">
                             {/* Client Selector */}
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">Cliente</label>
+                                <label className="block text-sm font-medium text-slate-700 mb-1 flex justify-between">
+                                    <span>Cliente</span>
+                                    {selectedClient !== 'general' && (
+                                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${walletBalance > 0 ? 'text-emerald-600 bg-emerald-50' : 'text-slate-500 bg-slate-100'}`}>
+                                            Monedero: {formatCurrency(walletBalance)}
+                                        </span>
+                                    )}
+                                </label>
                                 <div className="flex gap-2">
                                     <select
                                         value={selectedClient}
@@ -275,7 +572,7 @@ export default function Sales() {
                                         value={searchTerm}
                                         onChange={(e) => {
                                             setSearchTerm(e.target.value);
-                                            if (!e.target.value) setSelectedProduct(null);
+                                            if (!e.target.value) setSelectedProductSku(null);
                                         }}
                                         placeholder="Buscar por nombre o SKU..."
                                         className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none"
@@ -289,7 +586,7 @@ export default function Sales() {
                                                 key={p.sku}
                                                 type="button"
                                                 onClick={() => {
-                                                    setSelectedProduct(p);
+                                                    setSelectedProductSku(p.sku);
                                                     setSearchTerm(p.name);
                                                 }}
                                                 className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm"
@@ -307,7 +604,7 @@ export default function Sales() {
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            setSelectedProduct(null);
+                                            setSelectedProductSku(null);
                                             setSearchTerm('');
                                         }}
                                         className="absolute right-2 top-2 p-1 text-primary-400 hover:text-primary-600 transition-colors opacity-0 group-hover:opacity-100"
@@ -441,6 +738,24 @@ export default function Sales() {
                                     );
                                 })}
                             </div>
+
+                            {/* Payment Method Selector */}
+                            <div className="py-2">
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Método de Pago</label>
+                                <select
+                                    value={paymentMethod}
+                                    onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none text-sm font-medium"
+                                >
+                                    <option value="cash">EFECTIVO</option>
+                                    <option value="card_debit">TARJETA DEBITO</option>
+                                    <option value="card_credit">TARJETA CREDITO</option>
+                                    <option value="transfer">TRANSFERENCIA</option>
+                                    <option value="wallet">MONEDERO</option>
+                                    <option value="multiple">MIXTO</option>
+                                </select>
+                            </div>
+
                             <div className="pt-4 border-t-2 border-slate-100 flex justify-between items-center">
                                 <span className="text-slate-600 font-medium font-sans uppercase tracking-wider text-xs">Total Venta</span>
                                 <span className="text-2xl font-black text-primary-700">{formatCurrency(cartTotal)}</span>
@@ -454,6 +769,102 @@ export default function Sales() {
                         </div>
                     )}
                 </div>
+
+                {/* Payment Split Modal */}
+                {isPaymentModalOpen && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-primary-600 text-white">
+                                <h3 className="text-lg font-bold">Pago Múltiple</h3>
+                                <button onClick={() => setIsPaymentModalOpen(false)} className="text-white/80 hover:text-white"><X className="w-5 h-5" /></button>
+                            </div>
+                            <div className="p-6 space-y-4">
+                                <div className="text-center mb-4">
+                                    <div className="text-sm text-slate-500">Total a Pagar</div>
+                                    <div className="text-3xl font-black text-slate-800">{formatCurrency(cartTotal)}</div>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {/* Wallet Row */}
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-24 text-sm font-bold text-slate-600 uppercase">Monedero</div>
+                                        <input
+                                            type="number"
+                                            value={paymentSplits.wallet || ''}
+                                            onChange={e => handleSplitChange('wallet', Number(e.target.value))}
+                                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-primary-500"
+                                            placeholder={`Max: ${formatCurrency(walletBalance)}`}
+                                        />
+                                    </div>
+                                    {/* Cash Row */}
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-24 text-sm font-bold text-slate-600 uppercase">Efectivo</div>
+                                        <input
+                                            type="number"
+                                            value={paymentSplits.cash || ''}
+                                            onChange={e => handleSplitChange('cash', Number(e.target.value))}
+                                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-primary-500"
+                                        />
+                                    </div>
+                                    {/* Card Credit Row */}
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-24 text-sm font-medium text-slate-600">T. Crédito</div>
+                                        <input
+                                            type="number"
+                                            value={paymentSplits.card_credit || ''}
+                                            onChange={e => handleSplitChange('card_credit', Number(e.target.value))}
+                                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-primary-500"
+                                        />
+                                    </div>
+                                    {/* Card Debit Row */}
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-24 text-sm font-medium text-slate-600">T. Débito</div>
+                                        <input
+                                            type="number"
+                                            value={paymentSplits.card_debit || ''}
+                                            onChange={e => handleSplitChange('card_debit', Number(e.target.value))}
+                                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-primary-500"
+                                        />
+                                    </div>
+                                    {/* Transfer Row */}
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-24 text-sm font-medium text-slate-600">Transferencia</div>
+                                        <input
+                                            type="number"
+                                            value={paymentSplits.transfer || ''}
+                                            onChange={e => handleSplitChange('transfer', Number(e.target.value))}
+                                            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-primary-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="pt-4 border-t border-slate-100 mt-4">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <span className="text-sm font-medium text-slate-600">Total Cubierto:</span>
+                                        <span className={`font-bold ${Math.abs(Object.values(paymentSplits).reduce((a, b) => a + b, 0) - cartTotal) < 0.01 ? 'text-emerald-600' : 'text-orange-500'}`}>
+                                            {formatCurrency(Object.values(paymentSplits).reduce((a, b) => a + b, 0))}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center mb-4">
+                                        <span className="text-sm font-medium text-slate-600">Restante:</span>
+                                        <span className="font-bold text-slate-800">
+                                            {formatCurrency(cartTotal - Object.values(paymentSplits).reduce((a, b) => a + b, 0))}
+                                        </span>
+                                    </div>
+
+                                    <button
+                                        onClick={handleConfirmSplitPayment}
+                                        disabled={Math.abs(Object.values(paymentSplits).reduce((a, b) => a + b, 0) - cartTotal) > 0.01}
+                                        className="w-full py-3 bg-primary-600 hover:bg-primary-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-lg font-bold shadow-lg"
+                                    >
+                                        Registrar Venta
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
 
                 {/* History / Table - Responsive */}
                 <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
@@ -497,6 +908,7 @@ export default function Sales() {
                                     <th className="px-6 py-3">Folio</th>
                                     <th className="px-6 py-3">Cliente</th>
                                     <th className="px-6 py-3">Total</th>
+                                    <th className="px-6 py-3">Método</th>
                                     <th className="px-6 py-3">Vendedor</th>
                                     <th className="px-6 py-3">Fecha</th>
                                     <th className="px-6 py-3 text-right">Acciones</th>
@@ -512,6 +924,14 @@ export default function Sales() {
                                             </td>
                                             <td className={`px-6 py-4 font-bold ${amountColor(group.amount)}`}>
                                                 {formatCurrency(group.amount)}
+                                            </td>
+                                            <td className="px-6 py-4 text-slate-600 text-xs uppercase font-bold">
+                                                {group.paymentMethod === 'multiple' ? 'MIXTO' :
+                                                    group.paymentMethod === 'cash' ? 'EFECTIVO' :
+                                                        (group.paymentMethod === 'card' || group.paymentMethod === 'card_credit') ? 'TARJETA CREDITO' :
+                                                            group.paymentMethod === 'card_debit' ? 'TARJETA DEBITO' :
+                                                                group.paymentMethod === 'transfer' ? 'TRANSFERENCIA' :
+                                                                    group.paymentMethod === 'wallet' ? 'MONEDERO' : group.paymentMethod}
                                             </td>
                                             <td className="px-6 py-4 text-slate-600 text-xs">
                                                 {group.sellerName}
@@ -556,136 +976,199 @@ export default function Sales() {
                 </div>
             </div>
 
-            {/* Client Modal */}
-            {isClientModalOpen && (
-                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                        <div className="p-6 border-b border-slate-100 flex justify-between items-center sticky top-0 bg-white z-10">
-                            <h2 className="text-xl font-bold text-slate-800">
-                                Nuevo Cliente
-                            </h2>
-                            <button
-                                onClick={() => setIsClientModalOpen(false)}
-                                className="text-slate-400 hover:text-slate-600"
-                            >
-                                ✕
-                            </button>
-                        </div>
 
-                        <div className="p-6">
-                            <ClientForm
-                                onSubmit={handleNewClientSubmit}
-                                onCancel={() => setIsClientModalOpen(false)}
-                            />
+            {/* Client Modal */}
+            {
+                isClientModalOpen && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                            <div className="p-6 border-b border-slate-100 flex justify-between items-center sticky top-0 bg-white z-10">
+                                <h2 className="text-xl font-bold text-slate-800">
+                                    Nuevo Cliente
+                                </h2>
+                                <button
+                                    onClick={() => setIsClientModalOpen(false)}
+                                    className="text-slate-400 hover:text-slate-600"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <div className="p-6">
+                                <ClientForm
+                                    onSubmit={handleNewClientSubmit}
+                                    onCancel={() => setIsClientModalOpen(false)}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Detail Modal */}
-            {isDetailModalOpen && activeFolioData && (
-                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
-                        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                            <div>
-                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                                    Folio: {activeFolioData.folio}
-                                    {activeFolioData.isCancelled && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-sans uppercase">CANCELADO</span>}
-                                </h2>
-                                <div className="flex items-center gap-2 mt-1">
-                                    {isAdmin && !activeFolioData.isCancelled ? (
-                                        <div className="flex items-center gap-2">
-                                            <input
-                                                type="date"
-                                                value={getCDMXDateFromISO(activeFolioData.date)}
-                                                onChange={(e) => updateFolioDate(activeFolioData.folio, e.target.value)}
-                                                className="text-xs border-b border-dashed border-primary-500 bg-transparent text-primary-700 font-bold outline-none cursor-pointer"
-                                            />
+            {
+                isDetailModalOpen && activeFolioData && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+                            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                                <div>
+                                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                        Folio: {activeFolioData.folio}
+                                        {activeFolioData.isCancelled && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-sans uppercase">CANCELADO</span>}
+                                    </h2>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        {isAdmin && !activeFolioData.isCancelled ? (
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="date"
+                                                    value={getCDMXDateFromISO(activeFolioData.date)}
+                                                    onChange={(e) => updateFolioDate(activeFolioData.folio, e.target.value)}
+                                                    className="text-xs border-b border-dashed border-primary-500 bg-transparent text-primary-700 font-bold outline-none cursor-pointer"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm text-slate-500">{formatDate(activeFolioData.date)}</p>
+                                        )}
+                                        <span className="text-slate-400">|</span>
+                                        <p className="text-sm font-bold text-slate-700">{activeFolioData.clientName}</p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setIsDetailModalOpen(false)}
+                                    className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-200 rounded-full transition-colors"
+                                >
+                                    <X className="w-6 h-6" />
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-6">
+                                <table className="w-full text-left text-sm mb-6">
+                                    <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider">
+                                        <tr>
+                                            <th className="px-4 py-3">Producto</th>
+                                            <th className="px-4 py-3 text-center">Cant.</th>
+                                            <th className="px-4 py-3 text-center">Unidad</th>
+                                            <th className="px-4 py-3 text-right">Precio U.</th>
+                                            <th className="px-4 py-3 text-right">Subtotal</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {activeFolioData.items.map((item) => {
+                                            const p = products.find(prod => prod.sku === item.sku);
+                                            return (
+                                                <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="px-4 py-3">
+                                                        <div className="font-medium text-slate-900">{p?.name || item.sku}</div>
+                                                        <div className="text-xs text-slate-400">SKU: {item.sku}</div>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center text-slate-700 font-bold">{item.quantity}</td>
+                                                    <td className="px-4 py-3 text-center text-slate-400 font-bold uppercase text-[10px]">{item.unit || 'Litro'}</td>
+                                                    <td className="px-4 py-3 text-right text-slate-600">{formatCurrency(item.priceUnit)}</td>
+                                                    <td className="px-4 py-3 text-right font-bold text-slate-900">{formatCurrency(item.amount)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                    <tfoot className="bg-slate-50 font-bold">
+                                        <tr>
+                                            <td colSpan={4} className="px-4 py-4 text-right text-slate-600 uppercase tracking-tighter text-xs">Total de la Operación</td>
+                                            <td className="px-4 py-4 text-right text-2xl text-primary-700">{formatCurrency(activeFolioData.amount)}</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {/* Payment Details - Bottom Left - Styled like Theme */}
+                                    {activeFolioData.items[0]?.paymentMethod && (
+                                        <div className={`p-4 rounded-lg border flex flex-col gap-2 ${activeFolioData.items[0].paymentMethod === 'multiple' ? 'bg-primary-50 border-primary-100' : 'bg-slate-50 border-slate-200'}`}>
+                                            <h4 className={`text-sm font-bold flex items-center gap-2 uppercase ${activeFolioData.items[0].paymentMethod === 'multiple' ? 'text-primary-800' : 'text-slate-700'}`}>
+                                                <DollarSign className="w-4 h-4" />
+                                                Método de Pago: {activeFolioData.items[0].paymentMethod === 'multiple' ? 'Mixto' :
+                                                    activeFolioData.items[0].paymentMethod === 'cash' ? 'Efectivo' :
+                                                        (activeFolioData.items[0].paymentMethod === 'card_credit' || activeFolioData.items[0].paymentMethod === 'card_debit' || activeFolioData.items[0].paymentMethod === 'card') ? 'Tarjeta' :
+                                                            activeFolioData.items[0].paymentMethod === 'transfer' ? 'Transferencia' :
+                                                                activeFolioData.items[0].paymentMethod === 'wallet' ? 'Monedero' : activeFolioData.items[0].paymentMethod}
+                                            </h4>
+
+                                            {activeFolioData.items[0].paymentMethod === 'multiple' && activeFolioData.items[0].paymentDetails && (
+                                                <div className="space-y-1 mt-1">
+                                                    {Object.entries(activeFolioData.items[0].paymentDetails).map(([method, amount]) => (
+                                                        <div key={method} className="flex justify-between text-sm">
+                                                            <span className="capitalize text-primary-700 opacity-80">{method === 'cash' ? 'Efectivo' : (method === 'card' || method === 'card_credit' || method === 'card_debit') ? 'Tarjeta' : method === 'transfer' ? 'Transf.' : method === 'wallet' ? 'Monedero' : method}:</span>
+                                                            <span className="font-bold text-primary-900">{formatCurrency(amount as number)}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
-                                    ) : (
-                                        <p className="text-sm text-slate-500">{formatDate(activeFolioData.date)}</p>
                                     )}
-                                    <span className="text-slate-400">|</span>
-                                    <p className="text-sm font-bold text-slate-700">{activeFolioData.clientName}</p>
+
+                                    {/* Correction Notes - Bottom Right (or stacked) */}
+                                    {activeFolioData.items.some(i => i.correctionNote) && (
+                                        <div className="p-4 bg-red-50 border border-red-100 rounded-lg">
+                                            <h4 className="text-sm font-bold text-red-800 flex items-center gap-2 mb-1">
+                                                <AlertTriangle className="w-4 h-4" />
+                                                Notas / Motivo de Cancelación
+                                            </h4>
+                                            <p className="text-sm text-red-700">
+                                                {activeFolioData.items.find(i => i.correctionNote)?.correctionNote}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
-                            <button
-                                onClick={() => setIsDetailModalOpen(false)}
-                                className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-200 rounded-full transition-colors"
-                            >
-                                <X className="w-6 h-6" />
-                            </button>
-                        </div>
 
-                        <div className="flex-1 overflow-y-auto p-6">
-                            <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider">
-                                    <tr>
-                                        <th className="px-4 py-3">Producto</th>
-                                        <th className="px-4 py-3 text-center">Cant.</th>
-                                        <th className="px-4 py-3 text-center">Unidad</th>
-                                        <th className="px-4 py-3 text-right">Precio U.</th>
-                                        <th className="px-4 py-3 text-right">Subtotal</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {activeFolioData.items.map((item) => {
-                                        const p = products.find(prod => prod.sku === item.sku);
-                                        return (
-                                            <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                                                <td className="px-4 py-3">
-                                                    <div className="font-medium text-slate-900">{p?.name || item.sku}</div>
-                                                    <div className="text-xs text-slate-400">SKU: {item.sku}</div>
-                                                </td>
-                                                <td className="px-4 py-3 text-center text-slate-700 font-bold">{item.quantity}</td>
-                                                <td className="px-4 py-3 text-center text-slate-400 font-bold uppercase text-[10px]">{item.unit || 'Litro'}</td>
-                                                <td className="px-4 py-3 text-right text-slate-600">{formatCurrency(item.priceUnit)}</td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-900">{formatCurrency(item.amount)}</td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                                <tfoot className="bg-slate-50 font-bold">
-                                    <tr>
-                                        <td colSpan={4} className="px-4 py-4 text-right text-slate-600 uppercase tracking-tighter text-xs">Total de la Operación</td>
-                                        <td className="px-4 py-4 text-right text-2xl text-primary-700">{formatCurrency(activeFolioData.amount)}</td>
-                                    </tr>
-                                </tfoot>
-                            </table>
-
-                            {activeFolioData.items.some(i => i.correctionNote) && (
-                                <div className="mt-6 p-4 bg-red-50 border border-red-100 rounded-lg">
-                                    <h4 className="text-sm font-bold text-red-800 flex items-center gap-2 mb-1">
-                                        <AlertTriangle className="w-4 h-4" />
-                                        Notas / Motivo de Cancelación
-                                    </h4>
-                                    <p className="text-sm text-red-700">
-                                        {activeFolioData.items.find(i => i.correctionNote)?.correctionNote}
-                                    </p>
+                            <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={handlePrintTicket}
+                                        className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors border border-slate-300"
+                                        title="Imprimir Ticket"
+                                    >
+                                        <Printer className="w-5 h-5" />
+                                    </button>
+                                    <button
+                                        onClick={handleShareWhatsapp}
+                                        className="p-2 bg-green-100 hover:bg-green-200 text-green-700 rounded-lg transition-colors border border-green-300"
+                                        title="Enviar por WhatsApp"
+                                    >
+                                        <Share2 className="w-5 h-5" />
+                                    </button>
+                                    <button
+                                        onClick={handleShareEmail}
+                                        className="p-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg transition-colors border border-blue-300"
+                                        title="Enviar por Correo"
+                                    >
+                                        <Mail className="w-5 h-5" />
+                                    </button>
+                                    <button
+                                        onClick={handleGeneratePDFTicket}
+                                        className="p-2 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg transition-colors border border-rose-300"
+                                        title="Descargar PDF"
+                                    >
+                                        <FileText className="w-5 h-5" />
+                                    </button>
                                 </div>
-                            )}
-                        </div>
-
-                        <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
-                            <button
-                                onClick={() => setIsDetailModalOpen(false)}
-                                className="px-6 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-100 font-medium"
-                            >
-                                Cerrar
-                            </button>
-                            {isAdmin && !activeFolioData.isCancelled && (
                                 <button
-                                    onClick={() => handleCancelFolio(activeFolioData.folio)}
-                                    className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold shadow-lg shadow-red-500/30 flex items-center gap-2"
+                                    onClick={() => setIsDetailModalOpen(false)}
+                                    className="px-6 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-100 font-medium"
                                 >
-                                    <Trash2 className="w-4 h-4" />
-                                    Cancelar Venta
+                                    Cerrar
                                 </button>
-                            )}
+                                {isAdmin && !activeFolioData.isCancelled && (
+                                    <button
+                                        onClick={() => handleCancelFolio(activeFolioData.folio)}
+                                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold shadow-lg shadow-red-500/30 flex items-center gap-2"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                        Cancelar Venta
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
         </Layout>
     );
 }

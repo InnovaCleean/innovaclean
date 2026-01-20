@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { Layout } from '../components/Layout';
 import { THEMES } from '../lib/themes';
-import { Upload, Check, RefreshCw, DollarSign } from 'lucide-react';
+import { Upload, Check, RefreshCw, DollarSign, Gift } from 'lucide-react';
 
 export default function Settings() {
     const settings = useStore((state) => state.settings);
@@ -231,6 +231,41 @@ export default function Settings() {
                     </div>
                 </section>
 
+
+
+                {/* Loyalty Section */}
+                <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                    <h2 className="text-lg font-semibold text-slate-800 mb-6 flex items-center gap-2">
+                        <Gift className="w-5 h-5 text-primary-600" />
+                        Monedero Electrónico
+                    </h2>
+                    <p className="text-sm text-slate-500 mb-6">
+                        Configura el porcentaje de compra que se abonará al monedero del cliente.
+                    </p>
+
+                    <div className="max-w-md p-4 bg-primary-50 rounded-xl border border-primary-100">
+                        <div className="flex justify-between items-center mb-2">
+                            <label className="text-sm font-bold text-slate-700">Porcentaje de Bonificación</label>
+                            <span className="px-2 py-1 bg-primary-100 text-primary-700 rounded text-[10px] font-black uppercase">LOYALTY</span>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.1"
+                                value={settings.loyaltyPercentage || 0}
+                                onChange={(e) => useStore.getState().updateSettings({ loyaltyPercentage: parseFloat(e.target.value) || 0 })}
+                                className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-primary-500 outline-none"
+                            />
+                            <span className="text-lg font-bold text-slate-400">%</span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-2 italic">
+                            Ejemplo: Si pones 5%, por cada $100 de compra el cliente recibe $5 en su monedero. Pon 0 para desactivar.
+                        </p>
+                    </div>
+                </section>
+
                 {/* Price Thresholds Section */}
                 <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                     <h2 className="text-lg font-semibold text-slate-800 mb-6 flex items-center gap-2">
@@ -270,7 +305,7 @@ export default function Settings() {
                         <div className="space-y-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
                             <div className="flex justify-between items-center mb-2">
                                 <label className="text-sm font-bold text-slate-700">Umbral Mayoreo Total</label>
-                                <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-[10px] font-black uppercase">MAYOREO</span>
+                                <span className="px-2 py-1 bg-primary-100 text-primary-700 rounded text-[10px] font-black uppercase">MAYOREO</span>
                             </div>
                             <div className="flex items-center gap-4">
                                 <input
@@ -294,6 +329,6 @@ export default function Settings() {
                     </div>
                 </section>
             </div>
-        </Layout>
+        </Layout >
     );
 }

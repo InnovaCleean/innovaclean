@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { Layout } from '../components/Layout';
-import { Search, Edit2, Trash2, RefreshCw, X, Download, Upload } from 'lucide-react';
+import { Search, Edit2, Trash2, RefreshCw, X, Download, Upload, Plus } from 'lucide-react';
 import { formatCurrency } from '../lib/utils';
 import { Product } from '../types';
 import { downloadProductTemplate, parseProductsExcel } from '../lib/excelUtils';
@@ -13,18 +13,61 @@ export default function Inventory() {
     const deleteProduct = useStore((state) => state.deleteProduct);
     const resetAllStock = useStore((state) => state.resetAllStock);
     const importProducts = useStore((state) => state.importProducts);
+    const addProduct = useStore((state) => state.addProduct);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+    const [isCreating, setIsCreating] = useState(false);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-    const filteredProducts = products.filter(p =>
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.category.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ key: 'sku', direction: 'asc' });
+
+    const filteredProducts = useMemo(() => {
+        let result = products.filter(p =>
+            p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            p.category.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+
+        result.sort((a, b) => {
+            const aValue = (a as any)[sortConfig.key];
+            const bValue = (b as any)[sortConfig.key];
+
+            if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        return result;
+    }, [products, searchTerm, sortConfig]);
+
+    const handleSort = (key: string) => {
+        setSortConfig(current => ({
+            key,
+            direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
+        }));
+    };
 
     const isAdmin = user?.role === 'admin';
+
+    const defaultProduct: Product = {
+        id: '',
+        sku: '',
+        name: '',
+        category: 'General',
+        priceRetail: 0,
+        priceMedium: 0,
+        priceWholesale: 0,
+        cost: 0,
+        stockInitial: 0,
+        stockCurrent: 0,
+        unit: 'Pieza'
+    };
+
+    const handleCreate = () => {
+        setEditingProduct({ ...defaultProduct });
+        setIsCreating(true);
+    };
 
     const handleResetStock = () => {
         if (window.confirm('¿Está seguro de volver TODOS los stocks a 0? Esta acción no se puede deshacer.')) {
@@ -38,11 +81,17 @@ export default function Inventory() {
         }
     };
 
-    const handleEditSave = (e: React.FormEvent) => {
+    const handleEditSave = async (e: React.FormEvent) => {
         e.preventDefault();
         if (editingProduct) {
-            updateProduct(editingProduct.sku, editingProduct);
+            if (isCreating) {
+                await addProduct(editingProduct);
+                alert('Producto creado correctamente');
+            } else {
+                updateProduct(editingProduct.sku, editingProduct);
+            }
             setEditingProduct(null);
+            setIsCreating(false);
         }
     };
 
@@ -81,36 +130,47 @@ export default function Inventory() {
                                 />
                             </div>
                             <div className="flex gap-2">
-                                <button
-                                    onClick={downloadProductTemplate}
-                                    className="flex items-center gap-2 px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors text-xs font-bold"
-                                >
-                                    <Download className="w-3.5 h-3.5" />
-                                    PLANTILLA
-                                </button>
-                                <button
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className="flex items-center gap-2 px-3 py-2 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 transition-colors text-xs font-bold border border-primary-100"
-                                >
-                                    <Upload className="w-3.5 h-3.5" />
-                                    CARGAR
-                                </button>
-                                <input
-                                    type="file"
-                                    ref={fileInputRef}
-                                    onChange={handleImportExcel}
-                                    accept=".xlsx, .xls, .csv"
-                                    className="hidden"
-                                />
                                 {isAdmin && (
                                     <button
-                                        onClick={handleResetStock}
-                                        className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-lg hover:bg-red-100 transition-colors text-xs font-medium"
-                                        title="Reiniciar todo el stock a 0"
+                                        onClick={handleCreate}
+                                        className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors text-xs font-bold shadow-sm"
                                     >
-                                        <RefreshCw className="w-3.5 h-3.5" />
-                                        <span className="hidden sm:inline">Limpiar Stock</span>
+                                        <Plus className="w-3.5 h-3.5" />
+                                        NUEVO
                                     </button>
+                                )}
+                                {isAdmin && (
+                                    <>
+                                        <button
+                                            onClick={downloadProductTemplate}
+                                            className="flex items-center gap-2 px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors text-xs font-bold"
+                                        >
+                                            <Download className="w-3.5 h-3.5" />
+                                            PLANTILLA
+                                        </button>
+                                        <button
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="flex items-center gap-2 px-3 py-2 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 transition-colors text-xs font-bold border border-primary-100"
+                                        >
+                                            <Upload className="w-3.5 h-3.5" />
+                                            CARGAR
+                                        </button>
+                                        <input
+                                            type="file"
+                                            ref={fileInputRef}
+                                            onChange={handleImportExcel}
+                                            accept=".xlsx, .xls, .csv"
+                                            className="hidden"
+                                        />
+                                        <button
+                                            onClick={handleResetStock}
+                                            className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-600 border border-red-100 rounded-lg hover:bg-red-100 transition-colors text-xs font-medium"
+                                            title="Reiniciar todo el stock a 0"
+                                        >
+                                            <RefreshCw className="w-3.5 h-3.5" />
+                                            <span className="hidden sm:inline">Limpiar Stock</span>
+                                        </button>
+                                    </>
                                 )}
                             </div>
                         </div>
@@ -121,16 +181,16 @@ export default function Inventory() {
                     <table className="w-full text-left text-sm min-w-[1300px] border-separate border-spacing-0">
                         <thead className="bg-primary-600 text-white font-medium sticky top-0 z-20 shadow-md">
                             <tr>
-                                <th className="px-6 py-4 border-b border-primary-700">SKU</th>
-                                <th className="px-6 py-4 border-b border-primary-700">Categoría</th>
-                                <th className="px-6 py-4 border-b border-primary-700">Nombre</th>
-                                <th className="px-6 py-4 border-b border-primary-700">Unidad</th>
-                                <th className="px-6 py-4 text-center border-b border-primary-700">Stock</th>
-                                <th className="px-6 py-4 text-right border-b border-primary-700">Costo Unit.</th>
+                                <th onClick={() => handleSort('sku')} className="px-6 py-4 border-b border-primary-700 cursor-pointer hover:bg-primary-700">SKU</th>
+                                <th onClick={() => handleSort('category')} className="px-6 py-4 border-b border-primary-700 cursor-pointer hover:bg-primary-700">Categoría</th>
+                                <th onClick={() => handleSort('name')} className="px-6 py-4 border-b border-primary-700 cursor-pointer hover:bg-primary-700">Nombre</th>
+                                <th onClick={() => handleSort('unit')} className="px-6 py-4 border-b border-primary-700 cursor-pointer hover:bg-primary-700">Unidad</th>
+                                <th onClick={() => handleSort('stockCurrent')} className="px-6 py-4 text-center border-b border-primary-700 cursor-pointer hover:bg-primary-700">Stock</th>
+                                {isAdmin && <th className="px-6 py-4 text-right border-b border-primary-700">Costo Unit.</th>}
                                 <th className="px-6 py-4 text-right border-b border-primary-700">Menudeo</th>
                                 <th className="px-6 py-4 text-right border-b border-primary-700">Medio</th>
                                 <th className="px-6 py-4 text-right border-b border-primary-700">Mayoreo</th>
-                                <th className="px-6 py-4 text-right font-bold bg-primary-700 border-b border-primary-800">Valor Inv.</th>
+                                {isAdmin && <th className="px-6 py-4 text-right font-bold bg-primary-700 border-b border-primary-800">Valor Inv.</th>}
                                 {isAdmin && <th className="px-6 py-4 text-center border-b border-primary-700">Acciones</th>}
                             </tr>
                         </thead>
@@ -149,20 +209,27 @@ export default function Inventory() {
                                             {p.stockCurrent}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 text-right text-slate-500 font-mono text-xs">
-                                        {formatCurrency(p.cost)}
-                                    </td>
+                                    {isAdmin && (
+                                        <td className="px-6 py-4 text-right text-slate-500 font-mono text-xs">
+                                            {formatCurrency(p.cost)}
+                                        </td>
+                                    )}
                                     <td className="px-6 py-4 text-right font-medium">{formatCurrency(p.priceRetail)}</td>
                                     <td className="px-6 py-4 text-right text-slate-600">{formatCurrency(p.priceMedium)}</td>
                                     <td className="px-6 py-4 text-right text-slate-600">{formatCurrency(p.priceWholesale)}</td>
-                                    <td className="px-6 py-4 text-right font-bold text-primary-700 bg-primary-50 group-hover:bg-primary-100/50">
-                                        {formatCurrency(p.stockCurrent * p.cost)}
-                                    </td>
+                                    {isAdmin && (
+                                        <td className="px-6 py-4 text-right font-bold text-primary-700 bg-primary-50 group-hover:bg-primary-100/50">
+                                            {formatCurrency(p.stockCurrent * p.cost)}
+                                        </td>
+                                    )}
                                     {isAdmin && (
                                         <td className="px-6 py-4">
                                             <div className="flex items-center justify-center gap-2">
                                                 <button
-                                                    onClick={() => setEditingProduct(p)}
+                                                    onClick={() => {
+                                                        setEditingProduct(p);
+                                                        setIsCreating(false);
+                                                    }}
                                                     className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
                                                     title="Editar"
                                                 >
@@ -184,12 +251,14 @@ export default function Inventory() {
                     </table>
                 </div>
 
-                {/* Edit Modal */}
+                {/* Edit/Create Modal */}
                 {editingProduct && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
                         <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
                             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-primary-600 text-white">
-                                <h3 className="text-lg font-bold">Editar Producto: {editingProduct.sku}</h3>
+                                <h3 className="text-lg font-bold">
+                                    {isCreating ? 'Nuevo Producto' : `Editar Producto: ${editingProduct.sku}`}
+                                </h3>
                                 <button onClick={() => setEditingProduct(null)} className="p-1 hover:bg-white/20 rounded-lg">
                                     <X className="w-5 h-5" />
                                 </button>
@@ -197,6 +266,17 @@ export default function Inventory() {
 
                             <form onSubmit={handleEditSave} className="p-6 space-y-4">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-semibold text-slate-500 uppercase">SKU</label>
+                                        <input
+                                            type="text"
+                                            value={editingProduct.sku}
+                                            onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })}
+                                            className={`w-full px-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 ${!isCreating ? 'bg-slate-100' : ''}`}
+                                            required
+                                            disabled={!isCreating}
+                                        />
+                                    </div>
                                     <div className="space-y-1">
                                         <label className="text-xs font-semibold text-slate-500 uppercase">Nombre</label>
                                         <input
@@ -228,11 +308,14 @@ export default function Inventory() {
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <label className="text-xs font-semibold text-slate-500 uppercase">Stock Actual</label>
+                                        <label className="text-xs font-semibold text-slate-500 uppercase">Stock {isCreating ? 'Inicial' : 'Actual'}</label>
                                         <input
                                             type="number"
                                             value={editingProduct.stockCurrent}
-                                            onChange={(e) => setEditingProduct({ ...editingProduct, stockCurrent: parseInt(e.target.value) || 0 })}
+                                            onChange={(e) => {
+                                                const val = parseInt(e.target.value) || 0;
+                                                setEditingProduct({ ...editingProduct, stockCurrent: val, stockInitial: isCreating ? val : editingProduct.stockInitial });
+                                            }}
                                             className="w-full px-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary-500 font-mono"
                                             required
                                         />

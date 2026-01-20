@@ -80,4 +80,4 @@ export const INITIAL_PRODUCTS: Product[] = [
     { "sku": "1077", "category": "ROPA", "name": "SUAVIZANTE PRIMAVERA", "priceRetail": 17.00, "priceMedium": 14.00, "priceWholesale": 12.50, "cost": 5.70, "stockInitial": 0, "stockCurrent": 0 },
     { "sku": "1078", "category": "ROPA", "name": "SUAVIZANTE SUAVE SOL", "priceRetail": 17.00, "priceMedium": 14.00, "priceWholesale": 12.50, "cost": 5.70, "stockInitial": 0, "stockCurrent": 0 },
     { "sku": "1079", "category": "ROPA", "name": "VANISH", "priceRetail": 15.00, "priceMedium": 12.50, "priceWholesale": 12.00, "cost": 5.40, "stockInitial": 0, "stockCurrent": 0 }
-];
+].map(p => ({ ...p, id: crypto.randomUUID() }));

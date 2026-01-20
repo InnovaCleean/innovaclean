@@ -15,19 +15,24 @@ export default function Login() {
     const [isRecovering, setIsRecovering] = useState(false);
     const [recoveryUser, setRecoveryUser] = useState('');
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        const user = users.find(u => u.username === username && u.password === password);
+        try {
+            await login({ username, password } as any);
+            const currentUser = useStore.getState().user; // Get fresh state after login
 
-        if (user) {
-            login(user); // settings.logo is available globally via store/layout usually, but here we read it directly
-            if (user.role === 'admin') {
-                navigate('/dashboard');
+            if (currentUser) {
+                if (currentUser.role === 'admin') {
+                    navigate('/dashboard');
+                } else {
+                    navigate('/sales');
+                }
             } else {
-                navigate('/sales');
+                setError('Credenciales incorrectas');
             }
-        } else {
-            setError('Credenciales incorrectas');
+        } catch (err) {
+            console.error(err);
+            setError('Error al iniciar sesión');
         }
     };
 

@@ -3,7 +3,8 @@ import { useStore } from '../store/useStore';
 import { Layout } from '../components/Layout';
 import { formatCurrency, getCDMXDate, getCDMXFirstDayOfMonth, parseCDMXDate, getCDMXNow } from '../lib/utils';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Calendar } from 'lucide-react';
+import { Calendar, Download } from 'lucide-react';
+import { exportSalesToExcel } from '../lib/exportUtils';
 
 export default function Reports() {
     const sales = useStore((state) => state.sales);
@@ -141,6 +142,24 @@ export default function Reports() {
                     <h1 className="text-2xl font-bold text-slate-800">Reportes Avanzados</h1>
 
                     <div className="flex flex-wrap gap-2 items-center">
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => exportSalesToExcel(filteredSales, products, 'summary', `Ventas_Resumen_${selectedDate}`)}
+                                className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-xs font-bold shadow-sm"
+                                title="Exportar Resumen por Folio"
+                            >
+                                <Download className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">RESUMEN</span>
+                            </button>
+                            <button
+                                onClick={() => exportSalesToExcel(filteredSales, products, 'detailed', `Ventas_Detalle_${selectedDate}`)}
+                                className="flex items-center gap-2 px-3 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors text-xs font-bold shadow-sm"
+                                title="Exportar Detalle por Producto"
+                            >
+                                <Download className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline">DETALLE</span>
+                            </button>
+                        </div>
                         {/* Period Filter */}
                         <div className="flex bg-white rounded-lg border border-slate-300 overflow-hidden shadow-sm">
                             {[

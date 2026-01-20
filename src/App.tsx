@@ -9,9 +9,13 @@ import Users from './pages/Users';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
 import Clients from './pages/Clients';
+import Expenses from './pages/Expenses';
+import Loyalty from './pages/Loyalty';
+import CashFlow from './pages/CashFlow';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { useStore } from './store/useStore';
 import { useEffect } from 'react';
+import { THEMES } from './lib/themes';
 
 function App() {
     const fetchInitialData = useStore(state => state.fetchInitialData);
@@ -34,7 +38,15 @@ function App() {
             }
             link.href = settings.logo;
         }
-    }, [settings.companyName, settings.logo]);
+
+        // Apply Theme
+        const theme = THEMES.find(t => t.id === settings.themeId) || THEMES[0];
+        const root = document.documentElement;
+        Object.entries(theme.colors).forEach(([shade, value]) => {
+            root.style.setProperty(`--color-primary-${shade}`, value);
+        });
+
+    }, [settings.companyName, settings.logo, settings.themeId]);
 
     return (
 
@@ -93,6 +105,24 @@ function App() {
                 <Route path="/inventory" element={
                     <ProtectedRoute allowedRoles={['admin', 'seller']}>
                         <Inventory />
+                    </ProtectedRoute>
+                } />
+
+                <Route path="/expenses" element={
+                    <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                        <Expenses />
+                    </ProtectedRoute>
+                } />
+
+                <Route path="/loyalty" element={
+                    <ProtectedRoute allowedRoles={['admin', 'seller']}>
+                        <Loyalty />
+                    </ProtectedRoute>
+                } />
+
+                <Route path="/cash-flow" element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                        <CashFlow />
                     </ProtectedRoute>
                 } />
 

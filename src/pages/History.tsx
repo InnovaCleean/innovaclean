@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { Layout } from '../components/Layout';
 import { formatCurrency, formatDate, getCDMXDate, getCDMXFirstDayOfMonth, parseCDMXDate, getCDMXISOString } from '../lib/utils';
-import { FileDown, FileText, User, Calendar, ArrowUpDown, ArrowUp, ArrowDown, Eye, X } from 'lucide-react';
+import { FileDown, FileText, User, Calendar, ArrowUpDown, ArrowUp, ArrowDown, Eye, X, Pencil, Trash2, DollarSign } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -76,6 +76,11 @@ export default function History() {
             const p = products.find(prod => prod.sku === s.sku);
             groups[s.folio].cost += (p?.cost || 0) * s.quantity;
             groups[s.folio].items.push(s);
+            if (groups[s.folio].paymentMethods && !groups[s.folio].paymentMethods.includes(s.paymentMethod || 'cash')) {
+                groups[s.folio].paymentMethods.push(s.paymentMethod || 'cash');
+            } else if (!groups[s.folio].paymentMethods) {
+                groups[s.folio].paymentMethods = [s.paymentMethod || 'cash'];
+            }
         });
 
         let result = Object.values(groups);
@@ -119,18 +124,32 @@ export default function History() {
     }, [filteredSales]);
 
     const exportToExcel = () => {
-        const data = filteredSales.map(s => {
+        const data = sortedGroupedSales.map(g => {
+            const methods = g.paymentMethods ? g.paymentMethods.map((m: string) => {
+                const key = (m || 'cash').toLowerCase().trim();
+                const map: Record<string, string> = {
+                    'cash': 'EFECTIVO',
+                    'card_credit': 'TARJETA CREDITO',
+                    'card_debit': 'TARJETA DEBITO',
+                    'transfer': 'TRANSFERENCIA',
+                    'wallet': 'MONEDERO',
+                    'multiple': 'MIXTO'
+                };
+                return map[key] || m;
+            }).join(', ') : 'EFECTIVO';
+
+            // Short date format
+            const d = parseCDMXDate(g.date);
+            const shortDate = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+
             return {
-                Folio: s.folio,
-                Fecha: formatDate(s.date),
-                Cliente: s.clientName,
-                Vendedor: s.sellerName,
-                Producto: s.sku,
-                Cantidad: s.quantity,
-                Unidad: s.unit || 'Litro',
-                'Precio Unit': s.priceUnit,
-                Total: s.amount,
-                Estado: s.correctionNote?.includes('CANCELADO') ? 'CANCELADO' : 'ACTIVO'
+                Folio: g.folio,
+                Fecha: shortDate,
+                Cliente: g.clientName,
+                Vendedor: g.sellerName,
+                Total: g.amount,
+                'Método de Pago': methods,
+                Estado: g.isCancelled ? 'CANCELADO' : 'ACTIVO'
             };
         });
 
@@ -168,21 +187,45 @@ export default function History() {
         doc.setTextColor(0);
         doc.text('REPORTE DE VENTAS', 105, 55, { align: 'center' });
         doc.setFontSize(10);
-        doc.text(`Periodo: ${formatDate(startDate + 'T00:00:00').split(',')[0]} al ${formatDate(endDate + 'T00:00:00').split(',')[0]}`, 105, 62, { align: 'center' });
+
+        const startD = parseCDMXDate(startDate + 'T00:00:00');
+        const endD = parseCDMXDate(endDate + 'T00:00:00');
+        const formatD = (d: Date) => `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+
+        doc.text(`Periodo: ${formatD(startD)} al ${formatD(endD)}`, 105, 62, { align: 'center' });
 
         // Table Data
-        const tableData = sortedGroupedSales.map(g => [
-            g.folio,
-            formatDate(g.date).split(',')[0],
-            g.clientName,
-            g.sellerName,
-            formatCurrency(g.amount),
-            g.isCancelled ? 'CANCELADO' : 'ACTIVO'
-        ]);
+        const tableData = sortedGroupedSales.map(g => {
+            const d = parseCDMXDate(g.date);
+            const shortDate = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+
+            const methods = g.paymentMethods ? g.paymentMethods.map((m: string) => {
+                const key = (m || 'cash').toLowerCase().trim();
+                const map: Record<string, string> = {
+                    'cash': 'EFECTIVO',
+                    'card_credit': 'TARJETA CREDITO',
+                    'card_debit': 'TARJETA DEBITO',
+                    'transfer': 'TRANSFERENCIA',
+                    'wallet': 'MONEDERO',
+                    'multiple': 'MIXTO'
+                };
+                return map[key] || m;
+            }).join(', ') : 'EFECTIVO';
+
+            return [
+                g.folio,
+                shortDate,
+                g.clientName,
+                g.sellerName,
+                formatCurrency(g.amount),
+                methods,
+                g.isCancelled ? 'CANCELADO' : 'ACTIVO'
+            ];
+        });
 
         autoTable(doc, {
             startY: 70,
-            head: [['Folio', 'Fecha', 'Cliente', 'Vendedor', 'Total', 'Estado']],
+            head: [['Folio', 'Fecha', 'Cliente', 'Vendedor', 'Total', 'Método', 'Estado']],
             body: tableData,
             theme: 'striped',
             headStyles: { fillColor: [0, 102, 204] }
@@ -363,6 +406,7 @@ export default function History() {
                                         Monto <SortIcon columnKey="amount" />
                                     </div>
                                 </th>
+                                <th className="px-6 py-4 border-b border-primary-700 text-center">Método</th>
                                 <th className="px-6 py-4 border-b border-primary-700 text-center">Estado</th>
                                 <th className="px-6 py-4 border-b border-primary-700 text-right">Acciones</th>
                             </tr>
@@ -376,6 +420,19 @@ export default function History() {
                                     <td className="px-6 py-4 text-slate-600">{g.sellerName}</td>
                                     <td className={`px-6 py-4 font-bold text-right ${g.isCancelled ? 'text-red-400 line-through' : (g.amount < 0 ? 'text-red-600' : 'text-emerald-600')}`}>
                                         {formatCurrency(g.amount)}
+                                    </td>
+                                    <td className="px-6 py-4 text-center text-xs text-slate-500">
+                                        {g.paymentMethods ? g.paymentMethods.map((m: string) => {
+                                            const map: Record<string, string> = {
+                                                'cash': 'EFECTIVO',
+                                                'card_credit': 'TARJETA CREDITO',
+                                                'card_debit': 'TARJETA DEBITO',
+                                                'transfer': 'TRANSFERENCIA',
+                                                'wallet': 'MONEDERO',
+                                                'multiple': 'MIXTO'
+                                            };
+                                            return map[m] || m;
+                                        }).join(', ') : 'EFECTIVO'}
                                     </td>
                                     <td className="px-6 py-4 text-center">
                                         {g.isCancelled ? (
@@ -400,7 +457,7 @@ export default function History() {
                             ))}
                             {sortedGroupedSales.length === 0 && (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-20 text-center text-slate-400 italic font-medium">
+                                    <td colSpan={8} className="px-6 py-20 text-center text-slate-400 italic font-medium">
                                         No se encontraron registros en este periodo.
                                     </td>
                                 </tr>
@@ -441,6 +498,7 @@ export default function History() {
                                 <button
                                     onClick={() => setIsDetailModalOpen(false)}
                                     className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+                                    title="Cerrar"
                                 >
                                     <X className="w-6 h-6" />
                                 </button>
@@ -483,8 +541,9 @@ export default function History() {
                                                                 }
                                                             }}
                                                             className="p-1 px-2 text-blue-600 hover:bg-blue-50 rounded border border-blue-100 font-bold"
+                                                            title="Editar Cantidad"
                                                         >
-                                                            EDITAR
+                                                            <Pencil className="w-4 h-4" />
                                                         </button>
                                                         <button
                                                             onClick={() => {
@@ -494,8 +553,9 @@ export default function History() {
                                                                 }
                                                             }}
                                                             className="p-1 px-2 text-red-600 hover:bg-red-50 rounded border border-red-100 font-bold"
+                                                            title="Borrar Item"
                                                         >
-                                                            BORRAR
+                                                            <Trash2 className="w-4 h-4" />
                                                         </button>
                                                     </div>
                                                 </td>
@@ -510,6 +570,49 @@ export default function History() {
                                         </tr>
                                     </tfoot>
                                 </table>
+
+                                {/* Payment Breakdown Section */}
+                                {(() => {
+                                    const group = sortedGroupedSales.find(g => g.folio === selectedFolio);
+                                    // Assuming all items share the same payment details, take from first item
+                                    const firstItem = group?.items[0];
+                                    if (firstItem?.paymentMethod === 'multiple' && firstItem.paymentDetails) {
+                                        return (
+                                            <div className="mt-6 rounded-lg overflow-hidden border border-slate-200">
+                                                {/* Purple Header */}
+                                                <div className="bg-purple-100 p-3 flex items-center gap-2">
+                                                    <DollarSign className="w-5 h-5 text-purple-700" />
+                                                    <h4 className="text-sm font-bold text-purple-800 uppercase tracking-widest">
+                                                        DESGLOSE DE PAGO (MIXTO)
+                                                    </h4>
+                                                </div>
+
+                                                {/* White Body */}
+                                                <div className="bg-white p-4">
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        {Object.entries(firstItem.paymentDetails).map(([method, amount]) => {
+                                                            const map: Record<string, string> = {
+                                                                'cash': 'EFECTIVO',
+                                                                'card_credit': 'TARJETA CREDITO',
+                                                                'card_debit': 'TARJETA DEBITO',
+                                                                'transfer': 'TRANSFERENCIA',
+                                                                'wallet': 'MONEDERO',
+                                                                'multiple': 'MIXTO'
+                                                            };
+                                                            return (
+                                                                <div key={method} className="flex justify-between items-center bg-white p-2 rounded border border-slate-100">
+                                                                    <span className="text-xs font-bold text-slate-500 uppercase">{map[method] || method}</span>
+                                                                    <span className="text-sm font-black text-slate-800">{formatCurrency(amount as number)}</span>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+                                    return null;
+                                })()}
                             </div>
 
                             <div className="p-6 border-t border-slate-100 flex justify-end">
